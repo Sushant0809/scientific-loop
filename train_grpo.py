@@ -7,13 +7,27 @@ Key TRL 1.x changes vs 0.x:
   - reward_fn signature: (prompts, completions, **kwargs) -> list[float]
   - Dataset prompt field can be a plain string (non-conversational)
 """
+import importlib
 import json
 import os
 import re
+import subprocess
 import sys
 
 # Must be set before torch import to fix T4 memory fragmentation
 os.environ.setdefault("PYTORCH_CUDA_ALLOC_CONF", "expandable_segments:True")
+
+# Bootstrap: when hf jobs uv run --with ... doesn't install the local pyproject.toml package,
+# install it inline without deps so ScientificLoop.* imports resolve.
+try:
+    import ScientificLoop  # noqa: F401
+except ImportError:
+    _pkg_dir = os.path.dirname(os.path.realpath(__file__))
+    subprocess.run(
+        [sys.executable, "-m", "pip", "install", "-e", _pkg_dir, "--no-deps", "-q"],
+        check=True,
+    )
+    importlib.invalidate_caches()
 
 import torch
 from datasets import Dataset

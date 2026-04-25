@@ -15,9 +15,9 @@ import sys
 # Must be set before torch import to fix T4 memory fragmentation
 os.environ.setdefault("PYTORCH_CUDA_ALLOC_CONF", "expandable_segments:True")
 
-
 import torch
 from datasets import Dataset
+from peft import LoraConfig, TaskType
 from transformers import AutoModelForCausalLM, AutoTokenizer, TrainerCallback
 from trl import GRPOConfig, GRPOTrainer
 
@@ -54,6 +54,18 @@ model = AutoModelForCausalLM.from_pretrained(
     torch_dtype=torch.bfloat16 if torch.cuda.is_available() else torch.float32,
     device_map="auto",
 )
+
+# LoRA keeps trainable params ~0.5% of model, making GRPO fit in 22GB VRAM.
+# Base model (14GB bfloat16) + LoRA adapters + activations stays well under limit.
+lora_config = LoraConfig(
+    task_type=TaskType.CAUSAL_LM,
+    r=16,
+    lora_alpha=32,
+    target_modules=["q_proj", "v_proj", "k_proj", "o_proj", "gate_proj", "up_proj", "down_proj"],
+    lora_dropout=0.05,
+    bias="none",
+)
+print(f"Trainable parameters with LoRA r=16:")
 
 # No network env needed for training — we run code locally on the job machine
 # (faster, no latency, evaluates against the CORRECT paper from the prompt)
@@ -177,7 +189,7 @@ grpo_config = GRPOConfig(
     per_device_train_batch_size=4,     # must be >= num_generations
     gradient_accumulation_steps=4,
     learning_rate=5e-6,
-    max_completion_length=256,
+    max_completion_length=200,
     num_generations=4,                 # more diversity → non-zero reward_std sooner
     temperature=1.0,                   # higher temp → more varied outputs
     logging_steps=1,
@@ -193,6 +205,7 @@ trainer = GRPOTrainer(
     model=model,
     reward_funcs=reward_fn,            # TRL 1.x: positional arg 2
     args=grpo_config,
+    peft_config=lora_config,           # LoRA: only adapter params are trained
     train_dataset=train_dataset,
     processing_class=tokenizer,        # TRL 1.x: was tokenizer=
     callbacks=[EvalReproductionCallback(eval_every=25)],

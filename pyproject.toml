@@ -8,13 +8,15 @@ version = "0.1.0"
 description = "RL environment for scientific paper reproduction"
 requires-python = ">=3.10"
 dependencies = [
+    # Server runtime — keep minimal for fast Docker builds
     "openenv-core[core]>=0.2.2",
+    "fastapi>=0.100.0",
+    "uvicorn>=0.23.0",
+    # Sandbox execution — agent code needs these at runtime
     "torch>=2.0.0",
     "torchvision>=0.15.0",
     "numpy>=1.24.0",
     "gymnasium>=0.29.0",
-    "fastapi>=0.100.0",
-    "uvicorn>=0.23.0",
 ]
 
 [project.optional-dependencies]

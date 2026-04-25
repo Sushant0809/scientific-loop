@@ -75,7 +75,13 @@ def run_code(code: str, timeout: int = 45) -> Tuple[str, str, bool]:
             env={
                 "PATH": os.path.dirname(sys.executable) + ":/usr/bin:/usr/local/bin",
                 "HOME": "/tmp",
-                "PYTHONPATH": sysconfig.get_path("purelib"),
+                # Include both venv and system site-packages so agent code can import
+                # torch/gymnasium whether they are installed in venv or system-wide
+                "PYTHONPATH": ":".join(filter(None, [
+                    sysconfig.get_path("purelib"),
+                    sysconfig.get_path("platlib"),
+                    os.environ.get("PYTHONPATH", ""),
+                ])),
             },
         )
         return result.stdout, result.stderr, False

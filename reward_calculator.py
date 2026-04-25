@@ -22,14 +22,17 @@ def compute_step_reward(
         reward += improvement * 5.0
 
     # 3. Execution quality
-    if execution_status == "success":
-        reward += 2.0
-    elif execution_status == "error":
+    # NOTE: No bonus for merely running — only penalize failures.
+    # A raw success bonus incentivises reward hacking (trivial 2-token code gets +1.9).
+    # Positive signal comes entirely from metric proximity above.
+    if execution_status == "error":
         reward -= 2.0
     elif execution_status == "timeout":
         reward -= 1.5
     elif execution_status == "blocked":
         reward -= 4.0
+    elif execution_status == "success" and metrics_matched_count == 0 and reproduction_score == 0:
+        reward -= 0.5  # ran but produced nothing useful
 
     # 4. Partial metric match bonus
     if total_metrics > 0:

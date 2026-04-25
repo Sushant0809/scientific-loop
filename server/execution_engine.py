@@ -1,6 +1,7 @@
 import json
 import os
 import re
+import site
 import subprocess
 import sys
 import sysconfig
@@ -10,6 +11,27 @@ from typing import Dict, Tuple
 
 
 METRIC_PATTERN = re.compile(r"METRICS:\s*(\{.*?\})", re.DOTALL)
+
+
+def _build_pythonpath() -> str:
+    """Build PYTHONPATH that lets subprocess import torch/gymnasium from any install location."""
+    paths = []
+    # venv site-packages (purelib + platlib)
+    for scheme_key in ("purelib", "platlib"):
+        p = sysconfig.get_path(scheme_key)
+        if p and p not in paths:
+            paths.append(p)
+    # system Python site-packages (handles Docker base-image installs)
+    for p in site.getsitepackages():
+        if p not in paths:
+            paths.append(p)
+    # pass through any existing PYTHONPATH
+    existing = os.environ.get("PYTHONPATH", "")
+    if existing:
+        for p in existing.split(":"):
+            if p and p not in paths:
+                paths.append(p)
+    return ":".join(paths)
 
 BLOCKED_IMPORTS = [
     "requests",
@@ -75,13 +97,11 @@ def run_code(code: str, timeout: int = 45) -> Tuple[str, str, bool]:
             env={
                 "PATH": os.path.dirname(sys.executable) + ":/usr/bin:/usr/local/bin",
                 "HOME": "/tmp",
-                # Include both venv and system site-packages so agent code can import
-                # torch/gymnasium whether they are installed in venv or system-wide
-                "PYTHONPATH": ":".join(filter(None, [
-                    sysconfig.get_path("purelib"),
-                    sysconfig.get_path("platlib"),
-                    os.environ.get("PYTHONPATH", ""),
-                ])),
+                # Collect all candidate site-packages paths:
+                # venv purelib + platlib + system site-packages + existing PYTHONPATH
+                # This ensures torch/gymnasium are importable whether installed in
+                # the venv, system Python, or the base Docker image.
+                "PYTHONPATH": _build_pythonpath(),
             },
         )
         return result.stdout, result.stderr, False

@@ -21,18 +21,23 @@ def compute_step_reward(
         improvement = reproduction_score - prev_reproduction_score
         reward += improvement * 5.0
 
-    # 3. Execution quality
-    # NOTE: No bonus for merely running — only penalize failures.
-    # A raw success bonus incentivises reward hacking (trivial 2-token code gets +1.9).
-    # Positive signal comes entirely from metric proximity above.
+    # 3. Length penalty — aggressively penalise trivially short completions.
+    # A real Python implementation of a paper needs ≥80 characters.
+    # Without this, the model collapses to 2-token outputs (which run silently, no error).
+    code_len = len(current_code.strip())
+    if code_len < 80:
+        # Scales from -3.0 at 0 chars to 0.0 at 80 chars
+        reward -= 3.0 * max(0.0, 1.0 - code_len / 80.0)
+
+    # 4. Execution quality
     if execution_status == "error":
         reward -= 2.0
     elif execution_status == "timeout":
         reward -= 1.5
     elif execution_status == "blocked":
         reward -= 4.0
-    elif execution_status == "success" and metrics_matched_count == 0 and reproduction_score == 0:
-        reward -= 0.5  # ran but produced nothing useful
+    elif execution_status == "success" and reproduction_score == 0:
+        reward -= 0.5  # ran but produced nothing measurable
 
     # 4. Partial metric match bonus
     if total_metrics > 0:

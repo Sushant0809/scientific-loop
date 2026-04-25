@@ -150,8 +150,12 @@ class EvalReproductionCallback(TrainerCallback):
         for item in eval_dataset:
             inputs = tok(item["prompt"], return_tensors="pt").to(m.device)
             with torch.no_grad():
-                out = m.generate(**inputs, max_new_tokens=256, temperature=0.2, do_sample=True)
+                out = m.generate(**inputs, max_new_tokens=128, temperature=0.2, do_sample=True)
             code = tok.decode(out[0][inputs["input_ids"].shape[1]:], skip_special_tokens=True)
+            # Free eval generation memory before scoring
+            del out, inputs
+            if torch.cuda.is_available():
+                torch.cuda.empty_cache()
             paper = load_paper(item["paper_id"])
             stdout, stderr, timed_out = run_code(code, paper.execution_timeout)
             achieved = extract_metrics(stdout)
@@ -161,6 +165,9 @@ class EvalReproductionCallback(TrainerCallback):
         print(f"\n[Eval @ step {state.global_step}] Mean reproduction score: {mean_score:.3f}")
         with open(f"{OUTPUT_DIR}/eval_scores.jsonl", "a") as f:
             f.write(json.dumps({"step": state.global_step, "score": mean_score}) + "\n")
+        # Clear GPU cache after full eval pass so checkpoint save has headroom
+        if torch.cuda.is_available():
+            torch.cuda.empty_cache()
 
 
 # ── GRPO Config (TRL 1.x field names) ────────────────────────────────────────
@@ -175,7 +182,8 @@ grpo_config = GRPOConfig(
     num_generations=4,                 # more diversity → non-zero reward_std sooner
     temperature=1.0,                   # higher temp → more varied outputs
     logging_steps=1,
-    save_steps=50,
+    save_steps=75,          # offset from eval_every=25 so save never overlaps eval
+    save_total_limit=2,     # keep only last 2 checkpoints to save disk/memory
     report_to="none",
     bf16=torch.cuda.is_available(),
     gradient_checkpointing=True,       # trades compute for memory — needed on T4

@@ -451,12 +451,12 @@ def load_paper(paper_id: str) -> Paper:
 def sample_paper(episode_number: int = 0) -> Paper:
     """
     Curriculum sampling:
-    - Episodes 0-30:   warmup papers only
-    - Episodes 31-100: easy + medium + hard train papers (weighted 5:4:1)
-    - Episodes 101+:   all train papers uniformly
+    - Episodes 0-49:    warmup papers only (extended: model must learn output format first)
+    - Episodes 50-130:  easy + medium + hard train papers (weighted 5:3:1)
+    - Episodes 131+:    all train papers uniformly
     Eval papers are NEVER sampled here.
     """
-    if episode_number <= 30:
+    if episode_number <= 49:
         return random.choice(WARMUP_PAPERS)
 
     train_by_difficulty = {
@@ -465,10 +465,10 @@ def sample_paper(episode_number: int = 0) -> Paper:
         "hard":   [p for p in TRAIN_PAPERS if p.difficulty == "hard"],
     }
 
-    if episode_number <= 100:
+    if episode_number <= 130:
         pool = (
             train_by_difficulty["easy"] * 5 +
-            train_by_difficulty["medium"] * 4 +
+            train_by_difficulty["medium"] * 3 +
             train_by_difficulty["hard"] * 1
         )
     else:

@@ -1,4 +1,44 @@
+import json
+import re
 from typing import Optional
+
+
+def compute_format_reward(code: str) -> float:
+    """
+    Cheap format-only reward — no code execution required.
+    Creates gradient signal even when all completions fail to run,
+    breaking the dead-batch problem (zero reward variance in a batch).
+
+    Returns a value in roughly [0.0, 1.2].
+    """
+    r = 0.0
+
+    # Syntax-valid Python: cheaply catches mangled outputs
+    try:
+        compile(code, "<string>", "exec")
+        r += 0.4
+    except SyntaxError:
+        r -= 0.2
+
+    # Has a METRICS: print statement at all
+    if "METRICS:" in code:
+        r += 0.3
+
+    # Has valid JSON dict in the METRICS line
+    m = re.search(r"METRICS:\s*(\{[^}]+\})", code)
+    if m:
+        try:
+            json.loads(m.group(1))
+            r += 0.3
+        except (json.JSONDecodeError, ValueError):
+            pass
+
+    # Reasonable implementation length (100–4000 chars)
+    length = len(code)
+    if 100 <= length <= 4000:
+        r += 0.2
+
+    return round(r, 4)
 
 
 def compute_step_reward(
@@ -39,18 +79,19 @@ def compute_step_reward(
     elif execution_status == "success" and reproduction_score == 0:
         reward -= 0.5  # ran but produced nothing measurable
 
-    # 4. Partial metric match bonus
+    # 5. Partial metric match bonus
     if total_metrics > 0:
         reward += (metrics_matched_count / total_metrics) * 2.0
 
-    # 5. Efficiency pressure — discourages dragging episodes out
+    # 6. Efficiency pressure — discourages dragging episodes out
     reward -= 0.1 * step_number
 
-    # 6. Anti-stagnation — penalize submitting identical code
+    # 7. Anti-stagnation — penalize submitting identical code
     if previous_code and current_code.strip() == previous_code.strip():
         reward -= 3.0
 
-    return round(reward, 4)
+    # Clip to prevent extreme outliers from destabilizing GRPO advantage estimates
+    return round(max(-5.0, min(reward, 12.0)), 4)
 
 
 def compute_terminal_reward(

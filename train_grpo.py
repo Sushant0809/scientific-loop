@@ -23,7 +23,7 @@ from trl import GRPOConfig, GRPOTrainer
 
 from ScientificLoop.paper_corpus import EVAL_PAPERS, format_paper_for_agent, load_paper, sample_paper
 from ScientificLoop.server.execution_engine import compute_metric_proximity, extract_metrics, run_code
-from ScientificLoop.reward_calculator import compute_step_reward, compute_terminal_reward
+from ScientificLoop.reward_calculator import compute_format_reward, compute_step_reward, compute_terminal_reward
 
 # ── Config ────────────────────────────────────────────────────────────────────
 MODEL_NAME  = os.environ.get("MODEL_NAME", "Qwen/Qwen2.5-Coder-7B-Instruct")
@@ -102,20 +102,37 @@ eval_dataset  = make_eval_dataset()
 
 
 # ── Reward function (TRL 1.x signature) ──────────────────────────────────────
+def _extract_code(raw: str) -> str:
+    """
+    Extract Python code from a completion that may be wrapped in markdown fences
+    or contain surrounding prose. Handles both ```python ... ``` and bare code.
+    """
+    raw = raw.strip()
+    # Prefer an explicitly fenced block
+    fence = re.search(r"```(?:python)?\n(.*?)```", raw, re.DOTALL)
+    if fence:
+        return fence.group(1).strip()
+    # Remove any stray fence markers from instruct-model preamble/postamble
+    raw = re.sub(r"```(?:python)?", "", raw)
+    raw = re.sub(r"```", "", raw)
+    return raw.strip()
+
+
 def reward_fn(prompts: list, completions: list, **kwargs) -> list[float]:
     """
     TRL 1.x passes all dataset columns as **kwargs.
     We use kwargs["paper_id"] to evaluate each completion against the CORRECT paper.
     Code runs locally on the job machine — no network calls, no random paper mismatch.
+
+    Reward = execution_reward + 0.5 * format_reward
+    The format_reward creates gradient signal even when all completions fail to run,
+    preventing dead batches (zero reward variance → zero GRPO gradient).
     """
     paper_ids = kwargs.get("paper_id", [None] * len(completions))
     rewards = []
     for code, paper_id in zip(completions, paper_ids):
         paper = load_paper(paper_id)
-        # Strip markdown fences — instruct models often wrap code in ```python ... ```
-        code = re.sub(r"^```(?:python)?\s*\n?", "", code.strip(), flags=re.MULTILINE)
-        code = re.sub(r"\n?```\s*$", "", code, flags=re.MULTILINE)
-        code = code.strip()
+        code = _extract_code(code)
         stdout, stderr, timed_out = run_code(code, paper.execution_timeout)
 
         if "SecurityError" in stderr:
@@ -133,7 +150,7 @@ def reward_fn(prompts: list, completions: list, **kwargs) -> list[float]:
             1 for m, tv in paper.target_metrics.items()
             if m in achieved and abs(achieved[m] - tv) / max(abs(tv), 1e-6) <= 0.10
         )
-        reward = compute_step_reward(
+        exec_reward = compute_step_reward(
             reproduction_score=score,
             prev_reproduction_score=0.0,
             execution_status=exec_status,
@@ -143,7 +160,10 @@ def reward_fn(prompts: list, completions: list, **kwargs) -> list[float]:
             metrics_matched_count=matched,
             total_metrics=len(paper.target_metrics),
         )
-        rewards.append(reward)
+        # Format reward provides gradient signal before the model learns to execute code.
+        # Weighted at 0.5 so it doesn't overwhelm the execution quality signal.
+        fmt_reward = compute_format_reward(code)
+        rewards.append(round(exec_reward + 0.5 * fmt_reward, 4))
     return rewards
 
 
@@ -161,7 +181,7 @@ class EvalReproductionCallback(TrainerCallback):
         for item in eval_dataset:
             inputs = tok(item["prompt"], return_tensors="pt").to(m.device)
             with torch.no_grad():
-                out = m.generate(**inputs, max_new_tokens=128, temperature=0.2, do_sample=True)
+                out = m.generate(**inputs, max_new_tokens=512, temperature=0.2, do_sample=True)
             code = tok.decode(out[0][inputs["input_ids"].shape[1]:], skip_special_tokens=True)
             # Free eval generation memory before scoring
             del out, inputs
@@ -188,10 +208,10 @@ grpo_config = GRPOConfig(
     max_steps=MAX_STEPS,               # override epochs for quick local tests
     per_device_train_batch_size=4,     # must be >= num_generations
     gradient_accumulation_steps=4,
-    learning_rate=5e-6,
-    max_completion_length=200,
-    num_generations=4,                 # more diversity → non-zero reward_std sooner
-    temperature=1.0,                   # higher temp → more varied outputs
+    learning_rate=1e-5,                # increased from 5e-6 — LoRA GRPO trains faster at 1e-5
+    max_completion_length=1024,
+    num_generations=4,                 # keep at 4 — T4 VRAM ceiling with 7B model
+    temperature=1.1,                   # slightly higher → more diverse completions per prompt
     logging_steps=1,
     save_steps=75,          # offset from eval_every=25 so save never overlaps eval
     save_total_limit=2,     # keep only last 2 checkpoints to save disk/memory

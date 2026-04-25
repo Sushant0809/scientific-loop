@@ -198,6 +198,8 @@ grpo_config = GRPOConfig(
     report_to="none",
     bf16=torch.cuda.is_available(),
     gradient_checkpointing=True,       # trades compute for memory — needed on T4
+    push_to_hub=True,
+    hub_model_id="Sushant0809/scientific-loop-grpo",
 )
 
 # ── Trainer (TRL 1.x: processing_class instead of tokenizer) ─────────────────

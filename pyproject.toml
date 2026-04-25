@@ -1,0 +1,39 @@
+[build-system]
+requires = ["setuptools>=45", "wheel"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "openenv-scientific-loop"
+version = "0.1.0"
+description = "RL environment for scientific paper reproduction"
+requires-python = ">=3.10"
+dependencies = [
+    "openenv-core[core]>=0.2.2",
+    "torch>=2.0.0",
+    "torchvision>=0.15.0",
+    "numpy>=1.24.0",
+    "gymnasium>=0.29.0",
+    "fastapi>=0.100.0",
+    "uvicorn>=0.23.0",
+]
+
+[project.optional-dependencies]
+dev = [
+    "pytest>=8.0.0",
+    "pytest-asyncio>=0.21.0",
+    "pytest-cov>=4.0.0",
+]
+train = [
+    "trl>=0.8.0",
+    "transformers>=4.40.0",
+    "datasets>=2.0.0",
+    "accelerate>=0.28.0",
+]
+
+[project.scripts]
+server = "ScientificLoop.server.app:main"
+
+[tool.setuptools]
+include-package-data = true
+packages = ["ScientificLoop", "ScientificLoop.server"]
+package-dir = { "ScientificLoop" = ".", "ScientificLoop.server" = "server" }

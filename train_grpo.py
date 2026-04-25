@@ -20,21 +20,9 @@ from datasets import Dataset
 from transformers import AutoModelForCausalLM, AutoTokenizer, TrainerCallback
 from trl import GRPOConfig, GRPOTrainer
 
-_here = os.path.dirname(os.path.abspath(__file__))
-_parent = os.path.dirname(_here)
-
-# Layout 1 (local dev): train_grpo.py is inside ScientificLoop/, parent has ScientificLoop/ package
-# Layout 2 (HF Space):  openenv push flattens ScientificLoop/ to Space root, paper_corpus.py is sibling
-if os.path.isdir(os.path.join(_parent, "ScientificLoop")):
-    sys.path.insert(0, _parent)
-    from ScientificLoop.paper_corpus import EVAL_PAPERS, format_paper_for_agent, load_paper, sample_paper
-    from ScientificLoop.server.execution_engine import compute_metric_proximity, extract_metrics, run_code
-    from ScientificLoop.reward_calculator import compute_step_reward, compute_terminal_reward
-else:
-    sys.path.insert(0, _here)
-    from paper_corpus import EVAL_PAPERS, format_paper_for_agent, load_paper, sample_paper  # type: ignore
-    from server.execution_engine import compute_metric_proximity, extract_metrics, run_code  # type: ignore
-    from reward_calculator import compute_step_reward, compute_terminal_reward  # type: ignore
+from ScientificLoop.paper_corpus import EVAL_PAPERS, format_paper_for_agent, load_paper, sample_paper
+from ScientificLoop.server.execution_engine import compute_metric_proximity, extract_metrics, run_code
+from ScientificLoop.reward_calculator import compute_step_reward, compute_terminal_reward
 
 # ── Config ────────────────────────────────────────────────────────────────────
 MODEL_NAME  = os.environ.get("MODEL_NAME", "Qwen/Qwen2.5-Coder-7B-Instruct")

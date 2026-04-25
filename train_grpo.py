@@ -7,49 +7,14 @@ Key TRL 1.x changes vs 0.x:
   - reward_fn signature: (prompts, completions, **kwargs) -> list[float]
   - Dataset prompt field can be a plain string (non-conversational)
 """
-import importlib
 import json
 import os
 import re
-import subprocess
 import sys
 
 # Must be set before torch import to fix T4 memory fragmentation
 os.environ.setdefault("PYTORCH_CUDA_ALLOC_CONF", "expandable_segments:True")
 
-# Bootstrap: when hf jobs uv run --with ... doesn't install the local pyproject.toml package,
-# find the package root by searching for paper_corpus.py and install from there.
-try:
-    import ScientificLoop  # noqa: F401
-except ImportError:
-    # Print diagnostics to help debug HF Jobs path layout
-    _file_abs = os.path.realpath(os.path.abspath(__file__))
-    print(f"[bootstrap] __file__={__file__!r}  realpath={_file_abs!r}  cwd={os.getcwd()!r}", flush=True)
-    _dir = os.path.dirname(_file_abs)
-    for _d in [_dir, os.getcwd()]:
-        try:
-            print(f"[bootstrap] ls {_d}: {os.listdir(_d)[:15]}", flush=True)
-        except Exception as _e:
-            print(f"[bootstrap] ls {_d}: {_e}", flush=True)
-
-    # Search for pyproject.toml near the script or CWD
-    _pkg_dir = None
-    for _candidate in [_dir, os.getcwd(), os.path.dirname(_dir)]:
-        if os.path.isfile(os.path.join(_candidate, "pyproject.toml")):
-            _pkg_dir = _candidate
-            break
-    if _pkg_dir:
-        print(f"[bootstrap] Installing package from {_pkg_dir!r}", flush=True)
-        subprocess.run(
-            [sys.executable, "-m", "pip", "install", "-e", _pkg_dir, "--no-deps", "-q"],
-            check=True,
-        )
-        importlib.invalidate_caches()
-    else:
-        print("[bootstrap] WARNING: pyproject.toml not found, trying sys.path injection", flush=True)
-        for _p in [_dir, os.getcwd()]:
-            if _p not in sys.path:
-                sys.path.insert(0, _p)
 
 import torch
 from datasets import Dataset

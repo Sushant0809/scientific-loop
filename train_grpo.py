@@ -28,6 +28,7 @@ from ScientificLoop.reward_calculator import compute_format_reward, compute_step
 # ── Config ────────────────────────────────────────────────────────────────────
 MODEL_NAME  = os.environ.get("MODEL_NAME", "Qwen/Qwen2.5-Coder-7B-Instruct")
 ENV_URL     = os.environ.get("ENV_URL",    "https://sushant0809-scientific-loop.hf.space")
+HF_FLAVOR   = os.environ.get("HF_FLAVOR", "a10g-large")
 OUTPUT_DIR  = os.environ.get("OUTPUT_DIR", "./outputs/scientific-loop-grpo")
 TOTAL_EPISODES = int(os.environ.get("TOTAL_EPISODES", 200))
 MAX_STEPS   = int(os.environ.get("MAX_STEPS", -1))   # -1 = use num_epochs instead

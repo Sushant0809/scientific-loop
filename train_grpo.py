@@ -19,8 +19,8 @@ import time
 import torch
 
 # H200 sometimes reports CUDA Error 802 (system not yet initialized) on first probe.
-# Retry until the driver is ready before loading the model.
-for _i in range(15):
+# Retry for up to 3 minutes until the driver is ready before loading the model.
+for _i in range(36):
     if torch.cuda.is_available() and torch.cuda.device_count() > 0:
         try:
             torch.cuda.set_device(0)
@@ -29,10 +29,10 @@ for _i in range(15):
             break
         except RuntimeError:
             pass
-    print(f"Waiting for CUDA... attempt {_i+1}/15")
-    time.sleep(3)
+    print(f"Waiting for CUDA... attempt {_i+1}/36")
+    time.sleep(5)
 else:
-    print("WARNING: CUDA not available after 45s, falling back to CPU")
+    print("WARNING: CUDA not available after 3min, falling back to CPU")
 from datasets import Dataset
 from peft import LoraConfig, PeftModel, TaskType
 from transformers import AutoModelForCausalLM, AutoTokenizer, TrainerCallback

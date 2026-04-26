@@ -253,3 +253,105 @@ for item in eval_dataset:
     print(f"  {item['paper_id']:30s}  score={score:.3f}  achieved={achieved}")
 
 print(f"\nModel saved to: {OUTPUT_DIR}")
+
+# ── Training curves plot ───────────────────────────────────────────────────────
+try:
+    import matplotlib
+    matplotlib.use("Agg")  # non-interactive backend for server environments
+    import matplotlib.pyplot as plt
+    import matplotlib.gridspec as gridspec
+    import numpy as np
+
+    history = trainer.state.log_history
+    steps, rewards, stds, dead = [], [], [], []
+    for entry in history:
+        if "reward" in entry:
+            steps.append(entry["step"])
+            rewards.append(entry["reward"])
+            stds.append(entry.get("reward_std", 0))
+            dead.append(entry.get("frac_reward_zero_std", 0))
+
+    eval_steps, eval_scores = [], []
+    eval_path = f"{OUTPUT_DIR}/eval_scores.jsonl"
+    if os.path.exists(eval_path):
+        with open(eval_path) as f:
+            for line in f:
+                d = json.loads(line)
+                eval_steps.append(d["step"])
+                eval_scores.append(d["score"])
+
+    def _smooth(v, w=5):
+        if len(v) < w:
+            return v
+        return np.convolve(v, np.ones(w) / w, mode="valid").tolist()
+
+    fig = plt.figure(figsize=(14, 8))
+    fig.patch.set_facecolor("white")
+    gs = gridspec.GridSpec(2, 2, figure=fig, hspace=0.38, wspace=0.3)
+    best = max(rewards) if rewards else 0
+    fig.suptitle(
+        f"ScientificLoop GRPO  |  {MODEL_NAME.split('/')[-1]} + LoRA r=8\n"
+        f"{len(steps)} steps  ·  best reward: {best:.3f}",
+        fontsize=13, fontweight="bold",
+    )
+
+    # Mean reward
+    ax1 = fig.add_subplot(gs[0, 0])
+    ax1.plot(steps, rewards, color="#aecbfa", alpha=0.4, linewidth=1, label="raw")
+    sm = _smooth(rewards)
+    ax1.plot(steps[len(steps)-len(sm):], sm, color="#1a73e8", linewidth=2.5, label="smoothed (w=5)")
+    ax1.axhline(-2.1, color="#d93025", linestyle="--", linewidth=1.2, label="error floor")
+    ax1.fill_between(steps, rewards, -2.1, where=[r > -2.1 for r in rewards],
+                     alpha=0.15, color="#34a853", label="above floor")
+    ax1.set_title("Mean Reward per Step", fontweight="bold")
+    ax1.set_xlabel("Step"); ax1.set_ylabel("Reward")
+    ax1.legend(fontsize=8); ax1.grid(alpha=0.3)
+
+    # Reward std
+    ax2 = fig.add_subplot(gs[0, 1])
+    ax2.bar(steps, stds, color="#fbbc04", alpha=0.5, width=0.8, label="raw")
+    sm2 = _smooth(stds)
+    ax2.plot(steps[len(steps)-len(sm2):], sm2, color="#e37400", linewidth=2, label="smoothed")
+    ax2.set_title("Reward Std  (>0 = gradient signal)", fontweight="bold")
+    ax2.set_xlabel("Step"); ax2.set_ylabel("Std")
+    ax2.legend(fontsize=8); ax2.grid(alpha=0.3)
+
+    # Dead batches
+    ax3 = fig.add_subplot(gs[1, 0])
+    colors = ["#34a853" if v == 0 else ("#fbbc04" if v < 1 else "#ea4335") for v in dead]
+    ax3.bar(steps, dead, color=colors, alpha=0.8, width=0.8)
+    ax3.axhline(1.0, color="#d93025", linestyle="--", linewidth=1, label="all dead")
+    pct = 100 * np.mean([v > 0 for v in dead]) if dead else 0
+    ax3.set_title(f"Dead Batches  ({pct:.0f}% had zero std)", fontweight="bold")
+    ax3.set_xlabel("Step"); ax3.set_ylabel("Fraction")
+    ax3.set_ylim(0, 1.15); ax3.legend(fontsize=8); ax3.grid(alpha=0.3)
+
+    # Eval score
+    ax4 = fig.add_subplot(gs[1, 1])
+    if eval_steps:
+        ax4.plot(eval_steps, eval_scores, color="#a142f4", linewidth=2.5,
+                 marker="o", markersize=7, label="eval repro score")
+        ax4.axhline(0.8, color="#34a853", linestyle=":", linewidth=1.5, label="target (0.80)")
+        for s, v in zip(eval_steps, eval_scores):
+            ax4.annotate(f"{v:.3f}", (s, v), textcoords="offset points",
+                         xytext=(0, 8), fontsize=8, color="#a142f4", ha="center")
+    ax4.set_title("Eval Reproduction Score", fontweight="bold")
+    ax4.set_xlabel("Step"); ax4.set_ylabel("Score (0–1)")
+    ax4.set_ylim(-0.02, 1.05); ax4.legend(fontsize=8); ax4.grid(alpha=0.3)
+
+    plot_path = f"{OUTPUT_DIR}/training_curves.png"
+    plt.savefig(plot_path, dpi=150, bbox_inches="tight")
+    plt.close(fig)
+    print(f"Training curves saved to: {plot_path}")
+
+    # Push plot to Hub alongside the model
+    from huggingface_hub import HfApi
+    HfApi().upload_file(
+        path_or_fileobj=plot_path,
+        path_in_repo="training_curves.png",
+        repo_id="Sushant0809/scientific-loop-grpo",
+        repo_type="model",
+    )
+    print("Training curves pushed to HuggingFace Hub.")
+except Exception as e:
+    print(f"Plot generation skipped: {e}")

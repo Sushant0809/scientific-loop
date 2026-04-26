@@ -237,12 +237,12 @@ grpo_config = GRPOConfig(
     output_dir=OUTPUT_DIR,
     num_train_epochs=1,                # 1 epoch = 100 steps ≈ 1.5hr on H200
     max_steps=MAX_STEPS,               # override epochs for quick local tests
-    per_device_train_batch_size=8,     # increased from 4 — A100 80GB has headroom
-    gradient_accumulation_steps=2,     # halved to keep effective batch size the same
-    learning_rate=5e-6,                # reduced from 1e-5 — CUDA assert at step 43 was numerical instability
-    max_grad_norm=0.5,                 # clip gradients to prevent exploding values
+    per_device_train_batch_size=4,
+    gradient_accumulation_steps=4,
+    learning_rate=5e-6,
+    max_grad_norm=0.5,
     max_completion_length=1024,
-    num_generations=8,                 # increased from 4 — more diversity → stronger GRPO signal
+    num_generations=4,                 # 4 fits in a10g-large 24GB; was 8 for H200
     temperature=1.1,
     logging_steps=1,
     save_steps=50,          # mid-run checkpoint at step 50 (~1hr mark)

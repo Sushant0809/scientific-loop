@@ -19,8 +19,8 @@ import time
 import torch
 
 # H200 sometimes reports CUDA Error 802 (system not yet initialized) on first probe.
-# Retry for up to 3 minutes until the driver is ready before loading the model.
-for _i in range(36):
+# Retry until the driver is ready before loading the model.
+for _i in range(15):
     if torch.cuda.is_available() and torch.cuda.device_count() > 0:
         try:
             torch.cuda.set_device(0)
@@ -29,12 +29,12 @@ for _i in range(36):
             break
         except RuntimeError:
             pass
-    print(f"Waiting for CUDA... attempt {_i+1}/36")
-    time.sleep(5)
+    print(f"Waiting for CUDA... attempt {_i+1}/15")
+    time.sleep(3)
 else:
-    print("WARNING: CUDA not available after 3min, falling back to CPU")
+    print("WARNING: CUDA not available after 45s, falling back to CPU")
 from datasets import Dataset
-from peft import LoraConfig, PeftModel, TaskType
+from peft import LoraConfig, TaskType
 from transformers import AutoModelForCausalLM, AutoTokenizer, TrainerCallback
 from trl import GRPOConfig, GRPOTrainer
 
@@ -67,33 +67,21 @@ tokenizer = AutoTokenizer.from_pretrained(MODEL_NAME)
 if tokenizer.pad_token is None:
     tokenizer.pad_token = tokenizer.eos_token
 
-ADAPTER_ID = os.environ.get("ADAPTER_ID", "Sushant0809/scientific-loop-grpo")
-
-base_model = AutoModelForCausalLM.from_pretrained(
+model = AutoModelForCausalLM.from_pretrained(
     MODEL_NAME,
     torch_dtype=torch.bfloat16 if torch.cuda.is_available() else torch.float32,
     device_map="auto",
 )
 
-# Load previously trained LoRA adapter for warm-start (continued training).
-# This picks up where epoch 1 left off instead of learning from scratch.
-try:
-    model = PeftModel.from_pretrained(base_model, ADAPTER_ID, is_trainable=True)
-    print(f"Loaded LoRA adapter from {ADAPTER_ID} — warm-start training.")
-    lora_config = None  # already a PEFT model, no new config needed
-except Exception as e:
-    print(f"Could not load adapter ({e}), falling back to fresh LoRA.")
-    model = base_model
-    lora_config = LoraConfig(
-        task_type=TaskType.CAUSAL_LM,
-        r=8,
-        lora_alpha=16,
-        target_modules=["q_proj", "v_proj", "k_proj", "o_proj", "gate_proj", "up_proj", "down_proj"],
-        lora_dropout=0.05,
-        bias="none",
-    )
-
-print(f"Trainable parameters with LoRA r=8:")
+lora_config = LoraConfig(
+    task_type=TaskType.CAUSAL_LM,
+    r=8,
+    lora_alpha=16,
+    target_modules=["q_proj", "v_proj", "k_proj", "o_proj", "gate_proj", "up_proj", "down_proj"],
+    lora_dropout=0.05,
+    bias="none",
+)
+print(f"Trainable parameters with LoRA r={lora_config.r}:")
 
 # No network env needed for training — we run code locally on the job machine
 # (faster, no latency, evaluates against the CORRECT paper from the prompt)
@@ -221,7 +209,7 @@ class EvalReproductionCallback(TrainerCallback):
 # ── GRPO Config (TRL 1.x field names) ────────────────────────────────────────
 grpo_config = GRPOConfig(
     output_dir=OUTPUT_DIR,
-    num_train_epochs=2,                # 2 epochs = 200 steps ≈ 3hr on H200
+    num_train_epochs=1,                # 1 epoch = 100 steps ≈ 1.5hr on H200
     max_steps=MAX_STEPS,               # override epochs for quick local tests
     per_device_train_batch_size=8,     # increased from 4 — A100 80GB has headroom
     gradient_accumulation_steps=2,     # halved to keep effective batch size the same
@@ -244,7 +232,7 @@ trainer = GRPOTrainer(
     model=model,
     reward_funcs=reward_fn,
     args=grpo_config,
-    peft_config=lora_config,           # None when warm-starting (model is already PEFT)
+    peft_config=lora_config,
     train_dataset=train_dataset,
     processing_class=tokenizer,
     callbacks=[EvalReproductionCallback(eval_every=25)],

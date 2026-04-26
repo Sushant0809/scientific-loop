@@ -220,7 +220,7 @@ grpo_config = GRPOConfig(
     logging_steps=1,
     save_steps=50,          # mid-run checkpoint at step 50 (~1hr mark)
     save_total_limit=2,     # keep only last 2 checkpoints to save disk/memory
-    report_to="none",
+    report_to="tensorboard",           # experiment tracking — logs saved to OUTPUT_DIR/runs/
     bf16=torch.cuda.is_available(),
     gradient_checkpointing=True,       # trades compute for memory — needed on T4
     push_to_hub=True,
@@ -257,6 +257,22 @@ for item in eval_dataset:
     print(f"  {item['paper_id']:30s}  score={score:.3f}  achieved={achieved}")
 
 print(f"\nModel saved to: {OUTPUT_DIR}")
+
+# ── Push tensorboard logs to Hub ──────────────────────────────────────────────
+try:
+    from huggingface_hub import HfApi
+    tb_dir = f"{OUTPUT_DIR}/runs"
+    if os.path.exists(tb_dir):
+        HfApi().upload_folder(
+            folder_path=tb_dir,
+            path_in_repo="runs",
+            repo_id="Sushant0809/scientific-loop-grpo",
+            repo_type="model",
+            commit_message="Add tensorboard training logs",
+        )
+        print("Tensorboard logs pushed to Hub.")
+except Exception as e:
+    print(f"Tensorboard upload skipped: {e}")
 
 # ── Training curves plot ───────────────────────────────────────────────────────
 try:

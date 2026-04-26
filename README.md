@@ -254,6 +254,8 @@ curl http://localhost:8000/health
 
 - **Environment (HF Space):** https://huggingface.co/spaces/Sushant0809/scientific-loop
 - **Trained Model (LoRA adapter):** https://huggingface.co/Sushant0809/scientific-loop-grpo
+- **GitHub Repository:** https://github.com/Sushant0809/scientific-loop
+- **Blog Post:** https://huggingface.co/spaces/Sushant0809/scientific-loop/blob/main/hf_blog_post.md
 - **Training Job Logs:** https://huggingface.co/jobs/Sushant0809/69ed86d7d70108f37acdf6c5
 
 ---

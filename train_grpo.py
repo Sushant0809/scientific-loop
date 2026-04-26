@@ -14,6 +14,7 @@ import sys
 
 # Must be set before torch import to fix T4 memory fragmentation
 os.environ.setdefault("PYTORCH_CUDA_ALLOC_CONF", "expandable_segments:True")
+os.environ.setdefault("CUDA_LAUNCH_BLOCKING", "0")  # set to 1 for debug, 0 for speed
 
 import time
 import torch
@@ -238,7 +239,8 @@ grpo_config = GRPOConfig(
     max_steps=MAX_STEPS,               # override epochs for quick local tests
     per_device_train_batch_size=8,     # increased from 4 — A100 80GB has headroom
     gradient_accumulation_steps=2,     # halved to keep effective batch size the same
-    learning_rate=1e-5,
+    learning_rate=5e-6,                # reduced from 1e-5 — CUDA assert at step 43 was numerical instability
+    max_grad_norm=0.5,                 # clip gradients to prevent exploding values
     max_completion_length=1024,
     num_generations=8,                 # increased from 4 — more diversity → stronger GRPO signal
     temperature=1.1,

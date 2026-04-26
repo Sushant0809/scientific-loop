@@ -211,7 +211,7 @@ class EvalReproductionCallback(TrainerCallback):
 # ── GRPO Config (TRL 1.x field names) ────────────────────────────────────────
 grpo_config = GRPOConfig(
     output_dir=OUTPUT_DIR,
-    num_train_epochs=1,                # 1 epoch = 100 steps ≈ 2hr on H200, safe within 4hr timeout
+    num_train_epochs=2,                # 2 epochs = 200 steps ≈ 3hr on H200
     max_steps=MAX_STEPS,               # override epochs for quick local tests
     per_device_train_batch_size=8,     # increased from 4 — A100 80GB has headroom
     gradient_accumulation_steps=2,     # halved to keep effective batch size the same

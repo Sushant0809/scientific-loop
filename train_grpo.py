@@ -204,7 +204,7 @@ class EvalReproductionCallback(TrainerCallback):
 # ── GRPO Config (TRL 1.x field names) ────────────────────────────────────────
 grpo_config = GRPOConfig(
     output_dir=OUTPUT_DIR,
-    num_train_epochs=3,
+    num_train_epochs=2,                # 3→2: 150 steps was hitting HF 4hr job timeout
     max_steps=MAX_STEPS,               # override epochs for quick local tests
     per_device_train_batch_size=4,     # must be >= num_generations
     gradient_accumulation_steps=4,

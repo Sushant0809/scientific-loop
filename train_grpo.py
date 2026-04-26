@@ -172,6 +172,31 @@ def reward_fn(prompts: list, completions: list, **kwargs) -> list[float]:
     return rewards
 
 
+# ── Real-time TensorBoard push callback ───────────────────────────────────────
+class TensorBoardHubCallback(TrainerCallback):
+    """Pushes TensorBoard logs to HF Hub every N steps for real-time viewing."""
+    def __init__(self, push_every: int = 10):
+        self.push_every = push_every
+
+    def on_log(self, args, state, control, **kwargs):
+        if state.global_step % self.push_every != 0:
+            return
+        tb_dir = f"{args.output_dir}/runs"
+        if not os.path.exists(tb_dir):
+            return
+        try:
+            from huggingface_hub import HfApi
+            HfApi().upload_folder(
+                folder_path=tb_dir,
+                path_in_repo="runs",
+                repo_id="Sushant0809/scientific-loop-grpo",
+                repo_type="model",
+                commit_message=f"TensorBoard update step {state.global_step}",
+            )
+        except Exception:
+            pass  # never block training on a push failure
+
+
 # ── Eval callback ─────────────────────────────────────────────────────────────
 class EvalReproductionCallback(TrainerCallback):
     def __init__(self, eval_every: int = 25):
@@ -235,7 +260,10 @@ trainer = GRPOTrainer(
     peft_config=lora_config,
     train_dataset=train_dataset,
     processing_class=tokenizer,
-    callbacks=[EvalReproductionCallback(eval_every=25)],
+    callbacks=[
+        EvalReproductionCallback(eval_every=25),
+        TensorBoardHubCallback(push_every=10),  # push logs every 10 steps for real-time view
+    ],
 )
 
 print(f"\nStarting GRPO training — {TOTAL_EPISODES} episodes, model: {MODEL_NAME}")

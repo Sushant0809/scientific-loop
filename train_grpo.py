@@ -11,7 +11,6 @@ import json
 import os
 import re
 import sys
-from concurrent.futures import ThreadPoolExecutor
 
 # Must be set before torch import to fix T4 memory fragmentation
 os.environ.setdefault("PYTORCH_CUDA_ALLOC_CONF", "expandable_segments:True")
@@ -120,52 +119,41 @@ def _extract_code(raw: str) -> str:
     return raw.strip()
 
 
-def _score_one(args: tuple) -> float:
-    """Score a single completion. Top-level so it works with ThreadPoolExecutor."""
-    code_raw, paper_id = args
-    paper = load_paper(paper_id)
-    code = _extract_code(code_raw)
-    stdout, stderr, timed_out = run_code(code, paper.execution_timeout)
-
-    if "SecurityError" in stderr: exec_status = "blocked"
-    elif timed_out:                exec_status = "timeout"
-    elif stderr and not stdout:    exec_status = "error"
-    else:                          exec_status = "success"
-
-    achieved = extract_metrics(stdout)
-    score, _ = compute_metric_proximity(achieved, paper.target_metrics, paper.metric_weights)
-    matched = sum(
-        1 for m, tv in paper.target_metrics.items()
-        if m in achieved and abs(achieved[m] - tv) / max(abs(tv), 1e-6) <= 0.10
-    )
-    exec_reward = compute_step_reward(
-        reproduction_score=score,
-        prev_reproduction_score=0.0,
-        execution_status=exec_status,
-        step_number=1,
-        current_code=code,
-        previous_code=None,
-        metrics_matched_count=matched,
-        total_metrics=len(paper.target_metrics),
-    )
-    fmt_reward = compute_format_reward(code)
-    return round(exec_reward + 0.5 * fmt_reward, 4)
-
-
 def reward_fn(prompts: list, completions: list, **kwargs) -> list[float]:
     """
     TRL 1.x passes all dataset columns as **kwargs.
-    Completions are scored in parallel using ThreadPoolExecutor — run_code
-    spawns subprocesses so the GIL is released and true parallelism occurs.
-    With num_generations=8 and batch_size=8 (64 completions/step), parallel
-    execution cuts reward time from ~10 min/step to ~1 min/step.
+    We use kwargs["paper_id"] to evaluate each completion against the CORRECT paper.
     """
     paper_ids = kwargs.get("paper_id", [None] * len(completions))
-    args = list(zip(completions, paper_ids))
-    # H200 has 23 vCPUs — cap at 16 workers to leave headroom for the OS
-    max_workers = min(len(args), 16)
-    with ThreadPoolExecutor(max_workers=max_workers) as executor:
-        rewards = list(executor.map(_score_one, args))
+    rewards = []
+    for code, paper_id in zip(completions, paper_ids):
+        paper = load_paper(paper_id)
+        code = _extract_code(code)
+        stdout, stderr, timed_out = run_code(code, paper.execution_timeout)
+
+        if "SecurityError" in stderr: exec_status = "blocked"
+        elif timed_out:               exec_status = "timeout"
+        elif stderr and not stdout:   exec_status = "error"
+        else:                         exec_status = "success"
+
+        achieved = extract_metrics(stdout)
+        score, _ = compute_metric_proximity(achieved, paper.target_metrics, paper.metric_weights)
+        matched = sum(
+            1 for m, tv in paper.target_metrics.items()
+            if m in achieved and abs(achieved[m] - tv) / max(abs(tv), 1e-6) <= 0.10
+        )
+        exec_reward = compute_step_reward(
+            reproduction_score=score,
+            prev_reproduction_score=0.0,
+            execution_status=exec_status,
+            step_number=1,
+            current_code=code,
+            previous_code=None,
+            metrics_matched_count=matched,
+            total_metrics=len(paper.target_metrics),
+        )
+        fmt_reward = compute_format_reward(code)
+        rewards.append(round(exec_reward + 0.5 * fmt_reward, 4))
     return rewards
 
 

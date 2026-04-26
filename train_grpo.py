@@ -207,12 +207,12 @@ grpo_config = GRPOConfig(
     output_dir=OUTPUT_DIR,
     num_train_epochs=2,                # 3→2: 150 steps was hitting HF 4hr job timeout
     max_steps=MAX_STEPS,               # override epochs for quick local tests
-    per_device_train_batch_size=4,     # must be >= num_generations
-    gradient_accumulation_steps=4,
-    learning_rate=1e-5,                # increased from 5e-6 — LoRA GRPO trains faster at 1e-5
+    per_device_train_batch_size=8,     # increased from 4 — A100 80GB has headroom
+    gradient_accumulation_steps=2,     # halved to keep effective batch size the same
+    learning_rate=1e-5,
     max_completion_length=1024,
-    num_generations=4,                 # keep at 4 — T4 VRAM ceiling with 7B model
-    temperature=1.1,                   # slightly higher → more diverse completions per prompt
+    num_generations=8,                 # increased from 4 — more diversity → stronger GRPO signal
+    temperature=1.1,
     logging_steps=1,
     save_steps=75,          # offset from eval_every=25 so save never overlaps eval
     save_total_limit=2,     # keep only last 2 checkpoints to save disk/memory

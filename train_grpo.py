@@ -34,7 +34,7 @@ for _i in range(15):
 else:
     print("WARNING: CUDA not available after 45s, falling back to CPU")
 from datasets import Dataset
-from peft import LoraConfig, TaskType
+from peft import LoraConfig, PeftModel, TaskType
 from transformers import AutoModelForCausalLM, AutoTokenizer, TrainerCallback
 from trl import GRPOConfig, GRPOTrainer
 
@@ -67,23 +67,33 @@ tokenizer = AutoTokenizer.from_pretrained(MODEL_NAME)
 if tokenizer.pad_token is None:
     tokenizer.pad_token = tokenizer.eos_token
 
-model = AutoModelForCausalLM.from_pretrained(
+ADAPTER_ID = os.environ.get("ADAPTER_ID", "Sushant0809/scientific-loop-grpo")
+
+base_model = AutoModelForCausalLM.from_pretrained(
     MODEL_NAME,
     torch_dtype=torch.bfloat16 if torch.cuda.is_available() else torch.float32,
     device_map="auto",
 )
 
-# LoRA keeps trainable params ~0.5% of model, making GRPO fit in 22GB VRAM.
-# Base model (14GB bfloat16) + LoRA adapters + activations stays well under limit.
-lora_config = LoraConfig(
-    task_type=TaskType.CAUSAL_LM,
-    r=8,
-    lora_alpha=16,
-    target_modules=["q_proj", "v_proj", "k_proj", "o_proj", "gate_proj", "up_proj", "down_proj"],
-    lora_dropout=0.05,
-    bias="none",
-)
-print(f"Trainable parameters with LoRA r={lora_config.r}:")
+# Load previously trained LoRA adapter for warm-start (continued training).
+# This picks up where epoch 1 left off instead of learning from scratch.
+try:
+    model = PeftModel.from_pretrained(base_model, ADAPTER_ID, is_trainable=True)
+    print(f"Loaded LoRA adapter from {ADAPTER_ID} — warm-start training.")
+    lora_config = None  # already a PEFT model, no new config needed
+except Exception as e:
+    print(f"Could not load adapter ({e}), falling back to fresh LoRA.")
+    model = base_model
+    lora_config = LoraConfig(
+        task_type=TaskType.CAUSAL_LM,
+        r=8,
+        lora_alpha=16,
+        target_modules=["q_proj", "v_proj", "k_proj", "o_proj", "gate_proj", "up_proj", "down_proj"],
+        lora_dropout=0.05,
+        bias="none",
+    )
+
+print(f"Trainable parameters with LoRA r=8:")
 
 # No network env needed for training — we run code locally on the job machine
 # (faster, no latency, evaluates against the CORRECT paper from the prompt)
@@ -232,11 +242,11 @@ grpo_config = GRPOConfig(
 # ── Trainer (TRL 1.x: processing_class instead of tokenizer) ─────────────────
 trainer = GRPOTrainer(
     model=model,
-    reward_funcs=reward_fn,            # TRL 1.x: positional arg 2
+    reward_funcs=reward_fn,
     args=grpo_config,
-    peft_config=lora_config,           # LoRA: only adapter params are trained
+    peft_config=lora_config,           # None when warm-starting (model is already PEFT)
     train_dataset=train_dataset,
-    processing_class=tokenizer,        # TRL 1.x: was tokenizer=
+    processing_class=tokenizer,
     callbacks=[EvalReproductionCallback(eval_every=25)],
 )
 

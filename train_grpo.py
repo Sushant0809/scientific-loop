@@ -15,7 +15,24 @@ import sys
 # Must be set before torch import to fix T4 memory fragmentation
 os.environ.setdefault("PYTORCH_CUDA_ALLOC_CONF", "expandable_segments:True")
 
+import time
 import torch
+
+# H200 sometimes reports CUDA Error 802 (system not yet initialized) on first probe.
+# Retry until the driver is ready before loading the model.
+for _i in range(15):
+    if torch.cuda.is_available() and torch.cuda.device_count() > 0:
+        try:
+            torch.cuda.set_device(0)
+            _ = torch.zeros(1, device="cuda")  # force full driver init
+            print(f"CUDA ready: {torch.cuda.get_device_name(0)}")
+            break
+        except RuntimeError:
+            pass
+    print(f"Waiting for CUDA... attempt {_i+1}/15")
+    time.sleep(3)
+else:
+    print("WARNING: CUDA not available after 45s, falling back to CPU")
 from datasets import Dataset
 from peft import LoraConfig, TaskType
 from transformers import AutoModelForCausalLM, AutoTokenizer, TrainerCallback

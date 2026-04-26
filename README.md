@@ -33,7 +33,7 @@ Built on [OpenEnv](https://github.com/meta-pytorch/OpenEnv) for the **PyTorch ×
 | 📓 **Training Script** | [train_grpo.py](https://huggingface.co/spaces/Sushant0809/scientific-loop/blob/main/train_grpo.py) |
 | ▶️ **Colab Notebook** | [![Open In Colab](https://colab.research.google.com/assets/colab-badge.svg)](https://colab.research.google.com/github/Sushant0809/scientific-loop/blob/main/train_grpo.ipynb) |
 | 💻 **GitHub** | https://github.com/Sushant0809/scientific-loop |
-| 📊 **Training Job Logs** | https://huggingface.co/jobs/Sushant0809/69ed86d7d70108f37acdf6c5 |
+| 📊 **Training Run Logs** (TensorBoard / step metrics) | https://huggingface.co/jobs/Sushant0809/69ed86d7d70108f37acdf6c5 |
 
 ---
 
@@ -124,7 +124,7 @@ Fine-tuned **Qwen2.5-Coder-7B-Instruct** using **GRPO** (Group Relative Policy O
 | Episodes | 200 (curriculum: warmup → easy → medium → hard) |
 | Steps | 100 (1 epoch, 1h 31min) |
 | Max completion | 1024 tokens |
-| Experiment tracking | TensorBoard |
+| Experiment tracking | TensorBoard (`report_to="tensorboard"`) — full per-step logs at [HF Job run](https://huggingface.co/jobs/Sushant0809/69ed86d7d70108f37acdf6c5) |
 
 ### Training Command
 

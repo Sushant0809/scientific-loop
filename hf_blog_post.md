@@ -209,6 +209,8 @@ async def main():
 asyncio.run(main())
 ```
 
+**Training script:** [train_grpo.py](https://huggingface.co/spaces/Sushant0809/scientific-loop/blob/main/train_grpo.py) — the actual script used to train the model, run via `hf jobs uv run -- python train_grpo.py` on H200
+
 **Training notebook:** [![Open In Colab](https://colab.research.google.com/assets/colab-badge.svg)](https://colab.research.google.com/github/Sushant0809/scientific-loop/blob/main/train_grpo.ipynb)
 
 **Trained model:** [Sushant0809/scientific-loop-grpo](https://huggingface.co/Sushant0809/scientific-loop-grpo) — Qwen2.5-Coder-7B + LoRA r=8, GRPO-trained on H200

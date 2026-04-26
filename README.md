@@ -25,6 +25,8 @@ Built on [OpenEnv](https://github.com/meta-pytorch/OpenEnv) for the PyTorch × S
 
 **Environment:** [Sushant0809/scientific-loop](https://huggingface.co/spaces/Sushant0809/scientific-loop)
 
+**Training script:** [train_grpo.py](https://huggingface.co/spaces/Sushant0809/scientific-loop/blob/main/train_grpo.py) ← *this is what we actually ran*
+
 **Training notebook:** [![Open In Colab](https://colab.research.google.com/assets/colab-badge.svg)](https://colab.research.google.com/github/Sushant0809/scientific-loop/blob/main/train_grpo.ipynb)
 
 **Blog post:** [ScientificLoop: Teaching an LLM to Reproduce Scientific Papers with RL](https://huggingface.co/spaces/Sushant0809/scientific-loop/blob/main/hf_blog_post.md)
@@ -122,6 +124,8 @@ We fine-tuned **Qwen/Qwen2.5-Coder-7B-Instruct** using **GRPO** (Group Relative 
 
 ### Training Command
 
+Training was run directly via the `train_grpo.py` script on HuggingFace Jobs:
+
 ```bash
 hf jobs uv run \
     --with "trl>=1.2.0" --with torch --with transformers \
@@ -130,6 +134,8 @@ hf jobs uv run \
     --flavor h200 -s HF_TOKEN \
     -- python train_grpo.py
 ```
+
+The script (`train_grpo.py`) is self-contained — it loads the model, builds the dataset, defines the reward function, configures GRPO, runs training, generates the training curves plot, and pushes the LoRA adapter to Hub.
 
 ### Key Design Choices
 

@@ -194,7 +194,7 @@ class EvalReproductionCallback(TrainerCallback):
 # ── GRPO Config (TRL 1.x field names) ────────────────────────────────────────
 grpo_config = GRPOConfig(
     output_dir=OUTPUT_DIR,
-    num_train_epochs=2,                # 3→2: 150 steps was hitting HF 4hr job timeout
+    num_train_epochs=1,                # 1 epoch = 100 steps ≈ 2hr on H200, safe within 4hr timeout
     max_steps=MAX_STEPS,               # override epochs for quick local tests
     per_device_train_batch_size=8,     # increased from 4 — A100 80GB has headroom
     gradient_accumulation_steps=2,     # halved to keep effective batch size the same
@@ -203,7 +203,7 @@ grpo_config = GRPOConfig(
     num_generations=8,                 # increased from 4 — more diversity → stronger GRPO signal
     temperature=1.1,
     logging_steps=1,
-    save_steps=75,          # offset from eval_every=25 so save never overlaps eval
+    save_steps=50,          # mid-run checkpoint at step 50 (~1hr mark)
     save_total_limit=2,     # keep only last 2 checkpoints to save disk/memory
     report_to="none",
     bf16=torch.cuda.is_available(),

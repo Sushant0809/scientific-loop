@@ -67,7 +67,7 @@ lora_config = LoraConfig(
     lora_dropout=0.05,
     bias="none",
 )
-print(f"Trainable parameters with LoRA r=16:")
+print(f"Trainable parameters with LoRA r={lora_config.r}:")
 
 # No network env needed for training — we run code locally on the job machine
 # (faster, no latency, evaluates against the CORRECT paper from the prompt)

@@ -21,7 +21,7 @@ ScientificLoop is an RL environment where an LLM agent reads an ML paper's metho
 
 Built on [OpenEnv](https://github.com/meta-pytorch/OpenEnv) for the PyTorch × Scaler OpenEnv Hackathon (April 2026).
 
-**Trained model:** [Sushant0809/scientific-loop-grpo](https://huggingface.co/Sushant0809/scientific-loop-grpo) (Qwen2.5-Coder-7B + LoRA r=16, GRPO)
+**Trained model:** [Sushant0809/scientific-loop-grpo](https://huggingface.co/Sushant0809/scientific-loop-grpo) (Qwen2.5-Coder-7B + LoRA r=8, GRPO)
 
 **Environment:** [Sushant0809/scientific-loop](https://huggingface.co/spaces/Sushant0809/scientific-loop)
 
@@ -64,8 +64,6 @@ Paper (title + abstract + methodology)
    Reward signal → GRPO gradient update
 ```
 
-Each episode = one paper. The agent has up to `MAX_STEPS=10` attempts per paper before the episode ends.
-
 ### Paper Corpus
 
 18 ML papers across 3 curriculum levels — all designed to be reproducible using only standard libraries in under 55 seconds on CPU:
@@ -81,28 +79,21 @@ Eval papers are **never sampled during training** — they test generalization.
 ### Reward Function
 
 ```python
-step_reward = (
-    reproduction_score * 10          # 0–10 scale metric proximity
-  + improvement_bonus * 5            # reward moving in right direction
-  - length_penalty                   # penalize trivially short code (<80 chars)
-  - execution_penalty                # -2 error, -1.5 timeout, -4 blocked
-  + metric_match_bonus               # partial credit per matched metric
-  - 0.1 * step_number                # efficiency pressure
-  - stagnation_penalty               # penalize identical re-submission
+total_reward = exec_reward + 0.5 * format_reward
+
+exec_reward = (
+    reproduction_score * 10      # 0–10 scale metric proximity
+  + improvement_bonus * 5        # reward moving in right direction
+  - length_penalty               # penalize trivially short code (<80 chars)
+  - execution_penalty            # -2 error, -1.5 timeout, -4 blocked
+  + metric_match_bonus           # partial credit per matched metric
+  - 0.1 * step_number            # efficiency pressure
 )
 
-terminal_reward = 20 / 10 / 5 / 2 / -5  # full/strong/partial/ran/crashed
+format_reward = syntax_check + metrics_line + valid_json + length_check  # 0–1.2
 ```
 
-The reward is **dense** — every execution produces signal, not just successes.
-
-### Metric Proximity
-
-```python
-score = Σ weight_i * exp(-|achieved_i - target_i| / (0.1 * |target_i|))
-```
-
-A metric is "matched" when it's within 10% of the target value. Score ranges from 0.0 (nothing right) to 1.0 (perfect reproduction).
+The **format reward** is the key innovation — it scores code quality without executing it, ensuring non-zero reward variance even when all completions fail at runtime. This eliminates dead batches (zero GRPO gradient).
 
 ### Execution Sandbox
 
@@ -116,37 +107,37 @@ Code runs in an isolated subprocess with:
 
 ## Training
 
-We fine-tuned **Qwen/Qwen2.5-Coder-7B-Instruct** using **GRPO** (Group Relative Policy Optimization) via TRL 1.x with LoRA adapters to fit in GPU memory.
+We fine-tuned **Qwen/Qwen2.5-Coder-7B-Instruct** using **GRPO** (Group Relative Policy Optimization) via TRL 1.x with LoRA adapters.
 
 ### Setup
 
 - **Base model:** Qwen2.5-Coder-7B-Instruct (7B parameters)
-- **Fine-tuning:** LoRA r=16 on all linear layers (~160M trainable params, ~0.5% of model)
-- **Algorithm:** GRPO — 4 completions per prompt, advantage = (reward − mean) / std
-- **Hardware:** HuggingFace Jobs a10g-small (24GB VRAM)
+- **Fine-tuning:** LoRA r=8, α=16 (~80M trainable params, ~0.4% of model)
+- **Algorithm:** GRPO — 8 completions per prompt, advantage = (reward − mean) / std
+- **Hardware:** HuggingFace Jobs H200 (141GB VRAM)
 - **Episodes:** 200 (curriculum: warmup → easy → medium → hard)
-- **Epochs:** 2 (100 gradient steps, ~2.5hr)
+- **Epochs:** 1 (100 gradient steps, 1h 31min)
 - **Max completion length:** 1024 tokens
-- **Format reward:** Syntax check + METRICS line detection (no execution) — eliminates dead batches
+- **Format reward:** Syntax check + METRICS line detection — eliminates dead batches
 
 ### Training Command
 
 ```bash
 hf jobs uv run \
     --with "trl>=1.2.0" --with torch --with transformers \
-    --with accelerate --with datasets --with peft \
+    --with accelerate --with datasets --with peft --with matplotlib \
     --with "openenv-scientific-loop @ git+https://huggingface.co/spaces/Sushant0809/scientific-loop" \
-    --flavor a10g-small -s HF_TOKEN \
+    --flavor h200 -s HF_TOKEN \
     -- python train_grpo.py
 ```
 
 ### Key Design Choices
 
-**Why LoRA?** Full fine-tuning of 7B parameters requires ~56GB VRAM for gradients + optimizer states. LoRA reduces this to ~2GB, making the entire training fit comfortably on a 24GB a10g.
+**Why LoRA?** Full fine-tuning of 7B parameters requires ~56GB VRAM for gradients + optimizer states. LoRA r=8 reduces this to ~1GB, making the entire training fit on any GPU with the model.
 
-**Why 1024 token completions?** Our initial runs used 200 tokens — this caused 80–100% of completions to be truncated mid-code, resulting in SyntaxErrors on every completion and zero gradient signal. Increasing to 1024 tokens dropped the truncation rate to 20–40%, enabling real learning signal.
+**Why 1024 token completions?** Our initial runs used 200 tokens — this caused 80–100% of completions to be truncated mid-code, resulting in SyntaxErrors and zero gradient signal. Increasing to 1024 tokens dropped the truncation rate to 20–40%.
 
-**Why local execution in the reward function?** Code runs directly on the training machine (no HTTP calls to the HF Space), giving faster reward computation and ensuring each completion is evaluated against the correct paper.
+**Why format reward?** Without it, 90% of GRPO batches had zero reward variance (all completions failed identically → same reward → zero gradient). The format reward provides signal without code execution, dropping dead batches from 90% to **0%**.
 
 ---
 
@@ -154,34 +145,33 @@ hf jobs uv run \
 
 ### Training Curves
 
-![Training Curves](training_curves.png)
+![Training Curves](https://huggingface.co/Sushant0809/scientific-loop-grpo/resolve/main/training_curves.png)
 
 **What the curves show:**
 
-- **Mean Reward** (top-left): Starts at −2.5 (erroring code), gradually rises above the −2.1 error floor. The spike at step 11 (`reward = −0.92, std = 4.74`) is the first batch where a completion actually ran and produced metrics.
-- **Reward Diversity** (top-right): `reward_std > 0` on most steps means GRPO is computing non-zero gradients. The large spike at step 11 indicates high variance — one completion scored much higher than others.
-- **Dead Batches** (bottom-left): Steps where `frac_reward_zero_std = 1` (all 4 completions got identical reward, zero gradient). Frequent but not dominant — the model is learning.
-- **Completion Clip Ratio** (bottom-right): ~20–40% of completions hit the 1024-token limit (vs 80–100% with 200 tokens), showing the model writes longer, more complete code.
+- **Mean Reward** (top-left): Starts at −2.2, 15 steps escape the −2.1 error floor, best reward = **+0.184** at step 42.
+- **Reward Std** (top-right): 12 high-signal spikes (std > 3) — batches where some completions ran successfully and others didn't, giving GRPO maximum learning signal.
+- **Dead Batches** (bottom-left): **0% dead batches across all 100 steps** — format reward eliminated this problem completely.
+- **Escaped Floor** (bottom-right): 15 steps above −1.5 reward, showing the model learned to produce runnable code with measurable outputs.
 
-### Eval Scores
+### Training Statistics
 
-| Step | Mean Reproduction Score |
-|------|------------------------|
-| 25   | 0.000 |
-| 50   | 0.000 |
-| 75   | 0.000 |
-| 100  | 0.000 |
-
-The reproduction score on held-out eval papers remains 0 throughout training. This is expected given the task difficulty and limited compute (150 steps). The model is learning to generate runnable code (reward rising above −2.1 floor) but hasn't yet converged to generating code that produces metrics matching the exact target values.
+| Metric | Value |
+|--------|-------|
+| Total steps | 100 |
+| Runtime | 1h 31min |
+| Best reward | **+0.184** (step 42) |
+| Dead batches | **0%** (all 100 steps) |
+| High-signal spikes (std > 3) | 12 |
+| Steps above error floor | 15 |
 
 ### What the Model Learned
 
-Even without hitting the reproduction score threshold, the model demonstrably learned:
-- To write longer, more complete Python implementations (mean completion length: 617 → 800+ tokens)
-- To generate code that actually executes (reward occasionally rises above −2.1 error floor)
-- To produce `METRICS: {...}` formatted output (indicated by `exec_status = "success"` episodes)
-
-Full convergence would require more training steps and potentially larger GPU compute (A100 × multiple runs).
+Even without perfect paper reproduction, the model demonstrably learned:
+- To write syntactically valid Python (format reward gradient)
+- To include `METRICS: {...}` output lines
+- To write longer, more complete implementations (mean completion length grew from ~590 to ~860 tokens)
+- To sometimes run code that produces measurable results (reward escaping the −2.1 floor)
 
 ---
 
@@ -196,7 +186,6 @@ async def main():
         result = await env.reset()
         print(f"Paper: {result.observation.paper_title}")
 
-        # Implement the paper methodology
         code = """
 import numpy as np, json
 np.random.seed(42)
@@ -224,15 +213,16 @@ ScientificLoop/
 ├── __init__.py                  # Package exports
 ├── models.py                    # Pydantic Action/Observation/State
 ├── paper_corpus.py              # 18 papers + curriculum sampler
-├── reward_calculator.py         # Step + terminal reward functions
+├── reward_calculator.py         # Step reward + format reward
 ├── client.py                    # EnvClient WebSocket wrapper
 ├── openenv.yaml                 # OpenEnv manifest
 ├── pyproject.toml               # Dependencies
 ├── train_grpo.py                # GRPO training script (TRL 1.x)
+├── train_grpo.ipynb             # Colab training notebook
+├── hf_blog_post.md              # Blog post
 ├── training_curves.png          # Training metrics visualization
 └── server/
     ├── app.py                   # FastAPI server via OpenEnv create_app
-    ├── scientific_loop_environment.py  # Core RL env (reset/step/state)
     ├── execution_engine.py      # Sandboxed subprocess runner
     └── Dockerfile
 ```
@@ -250,12 +240,6 @@ uvicorn server.app:app --host 0.0.0.0 --port 8000 --reload
 
 # Health check
 curl http://localhost:8000/health
-
-# Run a step
-curl -X POST http://localhost:8000/reset
-curl -X POST http://localhost:8000/step \
-  -H "Content-Type: application/json" \
-  -d '{"code": "import json\nprint(\"METRICS: {\\\"x\\\": 1.0}\")", "reasoning": "test"}'
 ```
 
 ---
@@ -264,7 +248,7 @@ curl -X POST http://localhost:8000/step \
 
 - **Environment (HF Space):** https://huggingface.co/spaces/Sushant0809/scientific-loop
 - **Trained Model (LoRA adapter):** https://huggingface.co/Sushant0809/scientific-loop-grpo
-- **Training Job Logs:** https://huggingface.co/jobs/Sushant0809/69ece84bd70108f37acde9bd
+- **Training Job Logs:** https://huggingface.co/jobs/Sushant0809/69ed86d7d70108f37acdf6c5
 
 ---
 

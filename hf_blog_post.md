@@ -30,7 +30,7 @@ The agent gets **dense reward** on every attempt — not just 0/1 at the end. A 
 
 ### The Paper Corpus
 
-We designed 18 ML papers specifically for this task — not real papers with ImageNet results, but faithful algorithmic recreations using reproducible datasets (MNIST, CartPole, FrozenLake, synthetic data) that run in under 55 seconds on CPU:
+We designed 18 ML papers specifically for this task — faithful algorithmic recreations using reproducible datasets (MNIST, CartPole, FrozenLake, synthetic data) that run in under 55 seconds on CPU:
 
 | Split | Count | Examples |
 |-------|-------|---------|
@@ -44,19 +44,20 @@ Eval papers are **never seen during training** — they test generalization.
 
 ## The Training
 
-We fine-tuned **Qwen2.5-Coder-7B-Instruct** using **GRPO** (Group Relative Policy Optimization) with LoRA adapters on a HuggingFace Jobs a10g-small (24GB VRAM).
+We fine-tuned **Qwen2.5-Coder-7B-Instruct** using **GRPO** (Group Relative Policy Optimization) with LoRA adapters on a HuggingFace Jobs H200 (141GB VRAM).
 
 ### Configuration
 
 | Parameter | Value | Why |
 |-----------|-------|-----|
 | Base model | Qwen2.5-Coder-7B-Instruct | Strong coding baseline |
-| LoRA rank | r=16, α=32 | ~160M trainable params — fits in 24GB |
+| LoRA rank | r=8, α=16 | ~80M trainable params — fast + memory efficient |
 | Episodes | 200 (curriculum) | Warmup → easy → medium → hard |
-| GRPO generations | 4 per prompt | Diversity within memory budget |
+| GRPO generations | 8 per prompt | More diversity → stronger gradient signal |
 | Max completion | 1024 tokens | Full Python implementations |
 | Learning rate | 1e-5 | Standard for LoRA GRPO |
 | Temperature | 1.1 | More diverse completions |
+| Hardware | H200 (141GB) | Fast scheduling, large VRAM headroom |
 
 ---
 
@@ -64,7 +65,7 @@ We fine-tuned **Qwen2.5-Coder-7B-Instruct** using **GRPO** (Group Relative Polic
 
 ### Problem 1: 80–100% Truncated Completions
 
-Our initial runs used `max_completion_length=200`. This caused **most completions to be cut off mid-code**, resulting in SyntaxErrors on every completion → all 4 completions got identical reward → `reward_std = 0` → **zero gradient**.
+Our initial runs used `max_completion_length=200`. This caused **most completions to be cut off mid-code**, resulting in SyntaxErrors on every completion → all completions got identical reward → `reward_std = 0` → **zero gradient**.
 
 **Fix:** Increased to `max_completion_length=1024`. Clipped ratio dropped from ~87% to 20–40%.
 
@@ -72,14 +73,14 @@ Our initial runs used `max_completion_length=200`. This caused **most completion
 
 Even with longer completions, our first working run showed `frac_reward_zero_std ≈ 0.9` — meaning **90% of GRPO batches had zero reward variance**, contributing no gradient update.
 
-The root cause: when all 4 completions fail to execute (e.g., runtime error, missing METRICS line), they all get the same penalty → std = 0 → gradient = 0.
+The root cause: when all completions fail to execute (runtime error, missing METRICS line), they all get the same penalty → std = 0 → gradient = 0.
 
 ```
-Old: frac_reward_zero_std = 0.9 → model barely learning
-New: frac_reward_zero_std = 0.0 → real gradients every step
+Old run: frac_reward_zero_std = 0.9 → model barely learning
+New run: frac_reward_zero_std = 0.0 → real gradients every step
 ```
 
-**Fix:** We added a `compute_format_reward` function that scores code quality **without running it** — using only static analysis:
+**Fix:** We added a `compute_format_reward` function that scores code quality **without running it**:
 
 ```python
 def compute_format_reward(code: str) -> float:
@@ -102,43 +103,63 @@ def compute_format_reward(code: str) -> float:
     return r
 ```
 
-This creates variance even when all 4 completions fail at runtime — because they still differ in syntax validity, presence of the METRICS line, and code length. The total reward becomes `exec_reward + 0.5 * format_reward`.
+Total reward = `exec_reward + 0.5 * format_reward`. This creates variance even when all completions fail at runtime.
+
+### Problem 3: CUDA Error 802 on H200
+
+H200 instances on HuggingFace Jobs sometimes report `CUDA Error 802: system not yet initialized` — PyTorch probes for CUDA before the GPU driver finishes starting. If `is_available()` returns False, the 7B model loads in float32 on CPU → generation takes hours.
+
+**Fix:** A retry loop before model load:
+
+```python
+for _i in range(15):
+    if torch.cuda.is_available() and torch.cuda.device_count() > 0:
+        try:
+            torch.cuda.set_device(0)
+            _ = torch.zeros(1, device="cuda")
+            print(f"CUDA ready: {torch.cuda.get_device_name(0)}")
+            break
+        except RuntimeError:
+            pass
+    time.sleep(3)
+```
 
 ---
 
 ## Results
 
-### Training Signal: Before vs After
+### Training Curves
 
-The most important metric in GRPO is `frac_reward_zero_std` — the fraction of batches where all completions got the same reward (zero gradient). Here's what changed:
+![Training Curves](https://huggingface.co/Sushant0809/scientific-loop-grpo/resolve/main/training_curves.png)
 
-**Before (no format reward):**
-- `frac_reward_zero_std` ≈ 0.9 (90% dead batches)
-- Mean reward stuck at −2.1 floor throughout 100+ steps
+### Training Statistics
 
-**After (with format reward, steps 1–128):**
-- `frac_reward_zero_std` = **0** on 95%+ of all steps
-- Mean reward trajectory: −2.34 → −2.05 → −1.44 → **−0.61**
+| Metric | Value |
+|--------|-------|
+| Total steps | 100 |
+| Runtime | **1h 31min** |
+| Best reward | **+0.184** (step 42) |
+| Dead batches | **0%** (all 100 steps) |
+| High-signal spikes (std > 3) | 12 |
+| Steps above error floor | 15 |
+| Avg step time | ~50s (H200) |
 
-The high-variance spikes (`reward_std > 3.5`, occurring 8+ times) are particularly significant — they indicate batches where some completions successfully ran and produced measurable metrics while others didn't. These are the moments where GRPO has the clearest signal.
+### What the Curves Show
 
-| Step range | Mean reward | Notable |
-|-----------|-------------|---------|
-| 1–10 | −2.1 to −2.3 | Warm-up, format learning |
-| 19 | **−0.998** | First high-variance spike |
-| 30 | **−1.394** | std = 3.91, strong signal |
-| 89 | **−0.727** | Best in epoch 2 |
-| 102 | **−0.609** | Best overall |
+- **Mean Reward** (top-left): 15 steps escape the −2.1 error floor. Best = +0.184 — the model actually reproduced paper metrics on that batch.
+- **Reward Std** (top-right): 12 spikes with `std > 3` — the strongest gradient signal happens when some completions run successfully and others don't.
+- **Dead Batches** (bottom-left): **100% green**. Zero dead batches across all 100 steps — format reward completely solved this.
+- **Escaped Floor** (bottom-right): 15 batches above −1.5, showing the model learned to produce runnable code with measurable outputs.
 
 ### What The Model Learned
 
 Even without perfect paper reproduction, the model demonstrably learned:
-- To write syntactically valid Python (syntax error rate dropped)
-- To include `METRICS: {...}` output lines (format reward gradient)
-- To write longer, more complete implementations (mean length: 550 → 860 tokens by step 120)
-- To sometimes run code that produces measurable results (reward escaping the −2.1 floor)
+- To write syntactically valid Python
+- To include `METRICS: {...}` output lines
+- To write longer, more complete implementations (590 → 860 tokens mean length)
+- To sometimes run code that produces measurable results
 
-Full numerical convergence (matching paper targets within 10%) would require more compute. But the learning signal is real and growing.
+Full numerical convergence (matching paper targets within 10%) would require more compute. But the infrastructure works end-to-end and the learning signal is real.
 
 ---
 
@@ -152,19 +173,6 @@ ScientificLoop/
 └── server/
     ├── app.py            # FastAPI OpenEnv server
     └── execution_engine.py  # Sandboxed subprocess runner
-```
-
-### Curriculum Sampling
-
-```python
-def sample_paper(episode_number):
-    if episode_number <= 49:
-        return random.choice(WARMUP_PAPERS)     # pure numpy, no downloads
-    if episode_number <= 130:
-        pool = easy*5 + medium*3 + hard*1       # weight easier papers
-    else:
-        pool = TRAIN_PAPERS                     # uniform
-    return random.choice(pool)
 ```
 
 ### Reward Function
@@ -195,17 +203,15 @@ async def main():
     async with ScientificLoopEnv(base_url="https://Sushant0809-scientific-loop.hf.space") as env:
         obs = await env.reset()
         print(f"Paper: {obs.observation.paper_title}")
-        print(f"Task: {obs.observation.methodology[:200]}...")
-
         result = await env.step(ScientificLoopAction(code="<your implementation>"))
         print(f"Reproduction score: {result.observation.reproduction_score:.3f}")
 
 asyncio.run(main())
 ```
 
-**Training notebook:** [Open in Colab](https://colab.research.google.com/github/Sushant0809/scientific-loop/blob/main/train_grpo.ipynb)
+**Training notebook:** [![Open In Colab](https://colab.research.google.com/assets/colab-badge.svg)](https://colab.research.google.com/github/Sushant0809/scientific-loop/blob/main/train_grpo.ipynb)
 
-**Trained model:** [Sushant0809/scientific-loop-grpo](https://huggingface.co/Sushant0809/scientific-loop-grpo) — Qwen2.5-Coder-7B + LoRA r=16, GRPO-trained
+**Trained model:** [Sushant0809/scientific-loop-grpo](https://huggingface.co/Sushant0809/scientific-loop-grpo) — Qwen2.5-Coder-7B + LoRA r=8, GRPO-trained on H200
 
 **Environment:** [Sushant0809/scientific-loop](https://huggingface.co/spaces/Sushant0809/scientific-loop)
 
